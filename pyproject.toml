@@ -10,6 +10,10 @@ requires-python = ">=3.11"
 dependencies = [
   "eventkit-core[app] @ https://github.com/pu-shd/eventkit/archive/refs/tags/v0.3.0.tar.gz",
   "pydantic-settings>=2.2,<3",
+  # The runtime image's CMD runs uvicorn. Without it here the container
+  # cannot boot at all — and no test caught that, because the test stage
+  # never starts the server the way production does.
+  "uvicorn[standard]>=0.30,<1",
 ]
 
 [project.optional-dependencies]

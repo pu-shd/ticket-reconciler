@@ -47,6 +47,48 @@ jobs:
       - run: docker compose build test
       - run: docker compose run --rm test
 
+  # The test stage never starts the server the way production does, so nothing
+  # here noticed that the runtime image's CMD ran a uvicorn that was not
+  # installed: the container could not boot at all, and only a deploy would have
+  # found out. This boots the real runtime image and waits for /healthz.
+  runtime-boots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --target runtime -t app-runtime .
+
+      - name: Start it the way App Service does
+        run: |
+          docker run -d --name app -p 8000:8000 \
+            -v "$PWD/event-profile.yaml:/app/event-profile.yaml:ro" \
+            -e DRUPAL_WEBHOOK_TOKEN="$(openssl rand -hex 32)" \
+            -e AUTHORIZED_PRINCIPALS="ci@example.edu" \
+            -e DATABASE_URL="sqlite:////tmp/ticket_reconciler.db" \
+            app-runtime
+
+      - name: It must answer /healthz
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/healthz || true)
+            if [ "$code" = "200" ]; then echo "healthy after $((i * 2))s"; exit 0; fi
+            sleep 2
+          done
+          echo "::error::The runtime container never answered /healthz."
+          docker logs app
+          exit 1
+
+      - name: An admin route must refuse an anonymous caller
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/admin/db-backup || true)
+          case "$code" in
+            401|403|404) echo "ok ($code)" ;;
+            *) echo "::error::/api/admin/db-backup answered $code anonymously"; exit 1 ;;
+          esac
+
+      - if: always()
+        run: docker logs app 2>&1 | tail -30
+
   hygiene:
     runs-on: ubuntu-latest
     steps:
