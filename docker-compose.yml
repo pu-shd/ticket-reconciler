@@ -1,0 +1,22 @@
+services:
+  test:
+    build:
+      context: .
+      target: test
+    environment:
+      NO_PROXY: "*"
+
+  app:
+    build:
+      context: .
+      target: runtime
+    ports: ["8000:8000"]
+    environment:
+      DATABASE_URL: "sqlite:////tmp/ticket_reconciler.db"
+      DRUPAL_WEBHOOK_TOKEN: "local_dev_only_2f8c41d9a7b34e15c6f0"
+      AUTHORIZED_PRINCIPALS: "admin@example.edu"
+      ALLOW_LOCAL_DEV_ADMIN: "true"
+      LOCAL_DEV_ADMIN_PRINCIPAL: "admin@example.edu"
+      EVENT_PROFILE: "/app/event-profile.yaml"
+    volumes:
+      - ./event-profile.yaml:/app/event-profile.yaml:ro

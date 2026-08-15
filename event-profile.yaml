@@ -1,0 +1,174 @@
+# Example event profile for local development and tests.
+#
+# Generic on purpose: an adopter copies this, not a real event's file. The
+# sanitized worked reference for a real, complicated event is in eventkit at
+# examples/caarms-2026/event-profile.yaml.
+schema_version: 1
+
+event:
+  name: "Example Conference on Example Topics"
+  short_name: "EXCON"
+  year: 2030
+  slug: excon-2030
+  site_url: "https://example.edu/excon"
+  registration_form_url: "https://example.edu/form/registration"
+  contact_email: "excon@example.edu"
+
+schedule:
+  timezone: America/New_York
+  start_date: 2030-06-01
+  end_date: 2030-06-03
+  checkin_days:
+    - { key: "2030-06-01", date: 2030-06-01 }
+    - { key: "2030-06-02", date: 2030-06-02 }
+    - { key: "2030-06-02-banquet", date: 2030-06-02, kind: event, label: "Banquet" }
+    - { key: "2030-06-03", date: 2030-06-03 }
+
+branding:
+  site_name: "EXCON 2030"
+  slogan: "An example event"
+  theme: neutral
+  brand_color: "#e77500"
+
+drupal:
+  join_key: uuid
+  field_map:
+    fields:
+      email:            { key: [email, confirm_email_address], kind: email, required: true }
+      name:             { key: registrant_name, kind: name, required: true }
+      uuid:             { key: uuid, kind: text }
+      sid:              { key: sid, kind: int }
+      serial:           { key: serial, kind: int }
+      attendee_status:  { key: attendee_status, kind: select }
+      student:          { key: student, kind: bool }
+      home_institution_or_organization: { key: home_institution_or_organization, kind: text }
+      presenting_poster:            { key: presenting_poster, kind: bool }
+      poster_title:                 { key: poster_title, kind: text }
+      faculty_adviser_name:         { key: faculty_adviser_name, kind: text }
+      poster_presentation_abstract: { key: poster_presentation_abstract, kind: text }
+      lodging:              { key: lodging, kind: bool }
+      gender_identity:      { key: gender_identity, kind: select_other }
+      roommate_preference:  { key: roommate_preference, kind: select }
+      identified_roommate:  { key: identified_roommate, kind: text }
+      t_shirt_size:         { key: t_shirt_size, kind: select }
+      tickets_sold_separately: { key: tickets_sold_separately, kind: bool }
+      destination_url:      { key: destination_url, kind: url }
+
+roles:
+  drupal_field: attendee_status
+  default: Attendee
+  options:
+    - { key: Speaker,   label: Speaker,   plural: Speakers,   color: "#e77500", sort: 1 }
+    - { key: Organizer, label: Organizer, plural: Organizers, color: "#1a1a1a", sort: 2 }
+    - { key: Attendee,  label: Attendee,  plural: Attendees,  color: "#6c757d", sort: 3 }
+
+affiliation:
+  drupal_field: home_institution_or_organization
+  domain_map:
+    example.edu: "Example University"
+
+ticketing:
+  vendor: eventbrite
+  slug: excon-2030
+  exempt_field: tickets_sold_separately
+  exempt_means: unchecked_is_exempt
+  status_order: [Unmatched, Pending, Paid, Complete, Waived, Exempt, Refunded, Cancelled]
+  tiers:
+    - key: affiliate
+      label: "Affiliate rate"
+      discount_code_env: EVENTBRITE_DISCOUNT_AFFILIATE
+      match: { email_domain_suffix: ["example.edu"] }
+    - key: general
+      label: "General admission"
+      discount_code_env: EVENTBRITE_DISCOUNT_GENERAL
+      match: { default: true }
+
+swag:
+  enabled: true
+  kind: t-shirt
+  drupal_field: t_shirt_size
+  allow_replacement: true
+  options:
+    - { key: NONE, label: "No t-shirt, thanks!", short: "-", counts_toward_inventory: false, sort: 0 }
+    - { key: USML, label: "Unisex - Small",  short: "S",   sort: 1 }
+    - { key: UMED, label: "Unisex - Medium", short: "M",   sort: 2 }
+    - { key: ULRG, label: "Unisex - Large",  short: "L",   sort: 3 }
+    - { key: U1XL, label: "Unisex - 1XL",    short: "1XL", sort: 4 }
+    - { key: U2XL, label: "Unisex - 2XL",    short: "2XL", sort: 5 }
+    - { key: U3XL, label: "Unisex - 3XL",    short: "3XL", sort: 6 }
+
+lodging:
+  enabled: true
+  drupal_field: lodging
+  vocab:
+    gender_identity_options: ["Woman", "Man", "Non-binary", "Other", "Prefer not to say"]
+    roommate_preference_options: ["No Preference", "Prefer Same Gender", "Require Same Gender", "Single Room Requested"]
+    room_gender_options: ["Any", "Man", "Woman", "Non-binary", "Mixed"]
+    room_categories: ["Speaker Room", "Student Room"]
+    default_capacity: 2
+    capacities: [1, 2, 3, 4]
+  rules:
+    - { code: OVER_CAPACITY,                severity: error }
+    - { code: ROOM_GENDER_MISMATCH,         severity: error }
+    - { code: REQUIRE_SAME_GENDER_VIOLATED, severity: error }
+    - { code: PREFER_SAME_GENDER_VIOLATED,  severity: warning }
+    - { code: ROOMMATE_NOT_REGISTERED,      severity: warning }
+    - { code: ROOMMATE_ELSEWHERE,           severity: warning }
+    - { code: ROOMMATE_ONE_SIDED,           severity: warning }
+    - { code: SINGLE_ROOM_SHARED,           severity: warning }
+
+nametags:
+  avery_template: "5392"
+  show_role_badge: true
+  show_affiliation: true
+
+notify:
+  transport: log
+  from_name: "EXCON 2030 Registration"
+  default_recipients: ["excon@example.edu"]
+  events:
+    unmatched_payment: true
+    completed_payment: true
+    pending_payment: false
+    exempt_registration: false
+    sync_failed: true
+
+links:
+  reimbursement:
+    label: "Travel reimbursement form"
+    url: "https://example.edu/forms/reimbursement"
+    param_style: fragment
+    sensitivity: pii
+    fragment_params:
+      Business_Purpose: "EXCON 2030"
+      Departure_date: "2030-06-01"
+      Return_Date: "2030-06-03"
+    prefill:
+      Signer_name: "{full_name}"
+      Signer_email: "{email}"
+  media_release:
+    label: "Media release (DocuSign PowerForm)"
+    url: "https://na3.docusign.net/Member/PowerFormSigning.aspx"
+    param_style: query
+    sensitivity: pii
+    query_params_from_env: { PowerFormId: DOCUSIGN_MEDIA_RELEASE_FORM_ID }
+    query_params:
+      Event_Title: "EXCON 2030"
+      Event_Location: "Example University"
+    prefill:
+      Signer_UserName: "{full_name}"
+      Signer_Email: "{email}"
+  slide_upload:
+    label: "Upload your slides"
+    url: "https://example.edu/form/slide-upload"
+    param_style: query
+    sensitivity: pii
+    prefill: { email: "{email}", first_name: "{first_name}", last_name: "{last_name}" }
+    roles: [Speaker]
+  speaker_prefill:
+    label: "Edit your bio and talk submission"
+    url: "https://example.edu/form/speaker-bios-talks"
+    param_style: query
+    sensitivity: bearer
+    prefill: { token: "{token}" }
+    roles: [Speaker]

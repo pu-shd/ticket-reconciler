@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>{{ EVENT_TITLE }} — Reconciliation &amp; front desk</title>
+<link rel="stylesheet" href="/ui/tokens/tokens.css">
+<link rel="stylesheet" href="/ui/components/layout.css">
+<link rel="stylesheet" href="/ui/components/buttons.css">
+<style>{{ THEME_VARS }}</style>
+<style>
+  body { margin:0; font-family: var(--pt-font-body, system-ui, sans-serif); color:#1a1a1a; }
+  header { border-bottom:3px solid var(--pt-brand-70,#e77500); padding:.9rem 1rem;
+           display:flex; gap:1rem; align-items:center; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:1.2rem; }
+  main { max-width:96rem; margin:0 auto; padding:1rem 1rem 4rem; }
+  .tiles { display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem; }
+  .tile { flex:1 1 8rem; border:1px solid #e0e0e0; border-radius:6px; padding:.7rem .85rem; }
+  .tile b { display:block; font-size:1.5rem; line-height:1.1; }
+  .tile span { color:#666; font-size:.82rem; text-transform:uppercase; letter-spacing:.04em; }
+  .tile.money b { filter: blur(6px); cursor:pointer; }
+  .tile.money.shown b { filter:none; }
+  .bar { display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; margin-bottom:.9rem; }
+  .bar input, .bar select { padding:.45rem .6rem; border:1px solid #bbb; border-radius:4px; }
+  .bar input[type=search] { flex:1 1 16rem; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th,td { text-align:left; padding:.42rem .55rem; border-bottom:1px solid #e8e8e8; white-space:nowrap; }
+  th { background:#f6f6f6; position:sticky; top:0; z-index:1; }
+  .wrap { overflow-x:auto; }
+  .s { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.76rem; }
+  .s-Unmatched{background:#fce8e6;color:#a51d24}.s-Pending{background:#fff3cd;color:#7a5b00}
+  .s-Paid{background:#e8f0fe;color:#1a4d8f}.s-Complete{background:#e6f4ea;color:#14683b}
+  .s-Waived,.s-Exempt,.s-Manually{background:#eee;color:#444}
+  .s-Refunded,.s-Cancelled{background:#f3e8fd;color:#6b28b8}
+  .day { border:1px solid #ccc; background:#fff; width:2rem; height:1.6rem; border-radius:3px;
+         cursor:pointer; font-size:.72rem; padding:0; }
+  .day[data-state="1"]{background:#e6f4ea;border-color:#14683b}
+  .day[data-state="2"]{background:#fff3cd;border-color:#7a5b00}
+  .day[data-state="3"]{background:#fce8e6;border-color:#a51d24}
+  #toast{position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);background:#1a1a1a;
+         color:#fff;padding:.55rem 1rem;border-radius:4px;opacity:0;transition:opacity .2s;
+         pointer-events:none;z-index:9}
+  #toast.show{opacity:1}
+  .muted{color:#666;font-size:.85rem}
+</style>
+</head>
+<body>
+<header>
+  <h1>{{ EVENT_TITLE }} — front desk</h1>
+  <span class="muted" id="syncInfo"></span>
+  <span style="flex:1"></span>
+  <button class="pt-btn" id="syncBtn">Sync Eventbrite</button>
+  <a class="pt-btn" href="/api/reports/export.csv">Export CSV</a>
+  <a class="pt-btn" href="/api/admin/db-backup">Backup</a>
+</header>
+<main>
+  <div class="tiles" id="tiles"></div>
+  <div class="bar">
+    <input id="q" type="search" placeholder="Search name, email, serial…" aria-label="Search">
+    <select id="statusFilter" aria-label="Filter by status"><option value="">All statuses</option></select>
+    <label><input type="checkbox" id="owingOnly"> owing only</label>
+    <span class="muted" id="count"></span>
+  </div>
+  <div class="wrap"><table>
+    <thead><tr id="head"></tr></thead>
+    <tbody id="rows"><tr><td>Loading…</td></tr></tbody>
+  </table></div>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script id="profile" type="application/json">{{ PROFILE_JSON }}</script>
+<script type="module">
+import { escapeHtml } from "/ui/js/esc.js";
+
+const profile = JSON.parse(document.getElementById("profile").textContent);
+const days = (profile.schedule?.checkin_days ?? []);
+const swag = (profile.swag?.options ?? []);
+const shortSize = k => (swag.find(o => o.key === k)?.short) ?? k ?? "";
+
+const el = id => document.getElementById(id);
+let rows = [];
+
+function toast(m){ const t=el("toast"); t.textContent=m; t.classList.add("show");
+  setTimeout(()=>t.classList.remove("show"),2200); }
+
+el("head").innerHTML = `<th>Name</th><th>Email</th><th>Serial</th><th>Status</th>` +
+  days.map(d=>`<th title="${escapeHtml(d.key)}">${escapeHtml(d.label ?? d.key)}</th>`).join("") +
+  `<th>Swag</th><th>Issued</th>`;
+
+function tiles(s){
+  el("tiles").innerHTML = `
+    <div class="tile"><b>${s.registered}</b><span>Registered</span></div>
+    <div class="tile"><b>${s.complete}</b><span>Complete</span></div>
+    <div class="tile"><b>${s.pending}</b><span>Pending</span></div>
+    <div class="tile"><b>${s.unmatched}</b><span>Unmatched</span></div>
+    <div class="tile"><b>${s.exempt}</b><span>Exempt</span></div>
+    <div class="tile money" id="grossTile"><b>$${(s.gross_cents/100).toFixed(2)}</b><span>Gross</span></div>`;
+  el("grossTile").addEventListener("click", e => e.currentTarget.classList.toggle("shown"));
+  el("syncInfo").textContent = s.last_sync_at
+    ? `last sync ${new Date(s.last_sync_at).toLocaleString()} (${s.last_sync_status})`
+    : "never synced";
+}
+
+function render(){
+  const q = el("q").value.trim().toLowerCase();
+  const st = el("statusFilter").value;
+  let view = rows;
+  if (st) view = view.filter(r => r.status === st);
+  if (el("owingOnly").checked) view = view.filter(r => r.status === "Pending" || r.status === "Unmatched");
+  if (q) view = view.filter(r => [r.first_name,r.last_name,r.email,r.serial_number]
+      .filter(Boolean).join(" ").toLowerCase().includes(q));
+
+  el("count").textContent = `${view.length} of ${rows.length}`;
+  if (!view.length){ el("rows").innerHTML = `<tr><td colspan="99">Nothing matches.</td></tr>`; return; }
+
+  el("rows").innerHTML = view.map(r => {
+    const key = r.person_key ?? "";
+    const cells = days.map(d => {
+      const state = (r.checkin_status ?? {})[d.key] ?? 0;
+      return key
+        ? `<td><button class="day" data-action="checkin" data-key="${escapeHtml(key)}"
+             data-day="${escapeHtml(d.key)}" data-state="${state}"
+             title="${escapeHtml(d.label ?? d.key)}">${["·","✓","?","✗"][state]}</button></td>`
+        : `<td></td>`;
+    }).join("");
+    const cls = "s-" + String(r.status).split(" ")[0];
+    return `<tr>
+      <td>${escapeHtml([r.first_name,r.last_name].filter(Boolean).join(" "))}</td>
+      <td>${escapeHtml(r.email ?? "")}</td>
+      <td>${r.serial_number ?? ""}</td>
+      <td><span class="s ${cls}">${escapeHtml(r.status)}</span></td>
+      ${cells}
+      <td>${escapeHtml(shortSize(r.replacement_swag_size ?? r.swag_size))}</td>
+      <td>${key ? `<button class="pt-btn" data-action="swag" data-key="${escapeHtml(key)}"
+            >${r.swag_checked_in ? "issued" : "issue"}</button>` : ""}</td>
+    </tr>`;
+  }).join("");
+}
+
+// One delegated listener; data-action rather than interpolated inline handlers.
+el("rows").addEventListener("click", async ev => {
+  const btn = ev.target.closest("button[data-action]");
+  if (!btn) return;
+  const key = btn.dataset.key;
+  const row = rows.find(r => r.person_key === key);
+  btn.disabled = true;
+  try {
+    if (btn.dataset.action === "checkin") {
+      const next = ((Number(btn.dataset.state) || 0) + 1) % 4;
+      const res = await fetch("/api/checkin", { method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ person_key:key, day_key:btn.dataset.day, state:next }) });
+      if (!res.ok) throw new Error(res.status);
+      row.checkin_status = (await res.json()).checkin_status;
+    } else {
+      const res = await fetch("/api/swag/checkin", { method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ person_key:key, value: !row.swag_checked_in }) });
+      if (!res.ok) throw new Error(res.status);
+      row.swag_checked_in = (await res.json()).swag_checked_in;
+    }
+    render();
+  } catch { toast("Could not save — reload and try again"); }
+  finally { btn.disabled = false; }
+});
+
+el("syncBtn").addEventListener("click", async e => {
+  e.target.disabled = true; toast("Syncing…");
+  try {
+    const res = await fetch("/api/sync", { method:"POST" });
+    const body = await res.json();
+    toast(res.ok ? `Synced ${body.records_pulled} attendee(s)` : (body.detail ?? "Sync failed"));
+    if (res.ok) await load();
+  } catch { toast("Sync failed"); }
+  finally { e.target.disabled = false; }
+});
+
+["q","statusFilter","owingOnly"].forEach(id =>
+  el(id).addEventListener(id === "q" ? "input" : "change", render));
+
+async function load(){
+  const [rep, st] = await Promise.all([
+    fetch("/api/reports/registrations").then(r=>r.json()),
+    fetch("/api/reports/stats").then(r=>r.json()),
+  ]);
+  rows = rep; tiles(st);
+  const seen = [...new Set(rows.map(r=>r.status))].sort();
+  el("statusFilter").innerHTML = `<option value="">All statuses</option>` +
+    seen.map(s=>`<option>${escapeHtml(s)}</option>`).join("");
+  render();
+}
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -e ".[test]"
+      - run: python -m pytest -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check src tests
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose build test
+      - run: docker compose run --rm test
+
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No institutional addresses outside examples
+        run: |
+          if grep -rInE '[A-Za-z0-9._%+-]+@princeton\.edu' \
+               --exclude-dir=.git --exclude-dir=examples . ; then
+            echo "::error::Real @princeton.edu address in source. Use example.edu."
+            exit 1
+          fi
+          echo "OK"
+      - name: No placeholder webhook tokens
+        run: |
+          if grep -rInE 'secret_(drupal|nametags)_token' \
+               --exclude-dir=.git --exclude=ci.yml --exclude='*.md' . ; then
+            echo "::error::Placeholder webhook token committed."
+            exit 1
+          fi
+          echo "OK"
