@@ -32,9 +32,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v3
+      # ruff from PyPI rather than a marketplace action: it is one pip install,
+      # and it keeps the toolchain to things this project already depends on.
+      - uses: actions/setup-python@v5
         with:
-          args: check src tests
+          python-version: '3.11'
+      - run: pip install ruff
+      - run: ruff check src tests
 
   docker:
     runs-on: ubuntu-latest
