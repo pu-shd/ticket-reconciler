@@ -1,71 +1,37 @@
 # ticket-reconciler
 
-Reconciles Drupal registrations against Eventbrite ticket sales, and runs the
-front desk: check-in, swag, fee waivers.
+Reconciles Drupal registrations against Eventbrite sales, and runs the front desk.
 
-One of five applications in the [event-management stack](https://github.com/pu-shd/eventkit).
+One of five applications in the
+[event-management stack](https://github.com/pu-shd/event-stack), built on
+[eventkit](https://github.com/pu-shd/eventkit).
 
 ## What it does
 
-- **Reconciliation.** Joins registrations to Eventbrite orders and derives a status
-  per person: `Pending`, `Paid`, `Complete`, `Exempt`, `Waived`, `Refunded`,
-  `Cancelled`, or `Unmatched`.
-- **Front desk.** Per-day check-in with a four-state cycle, swag issuance and size
-  swaps, fee waivers with a recorded justification, and a refund override for
-  someone who refunded but turned up anyway.
-- **Manual linking** for the common case where somebody bought a ticket with a
-  different address than they registered with.
-- **Saved groups**, so the desk can filter to a delegation quickly.
-- **CSV export** and a full JSON backup.
-
-## The reconciliation engine is a pure function
-
-`build_report(registrants, payments, profile)` takes lists and returns rows. No
-session, no settings, no clock. In the predecessor this was 130 lines inside a route
-handler, which made the most valuable logic in the stack also the least testable.
-
-`tests/test_reconcile.py` pins the truth table case by case, including the two
-guards that matter:
-
-- A payment claimed by somebody's **manual link** is not also matched to a different
-  person who happens to share the address.
-- One payment is never matched to **two** people. The webform makes email unique so
-  it should not arise, but the cost of getting it wrong is a doubled revenue figure
-  and two people shown as Paid for one ticket.
-
-## Check-in day keys are ISO dates
-
-Configured in the event profile, validated on every write. The predecessor used bare
-`"6/28"` strings: year-less, colliding across events, and ambiguous to parse — both
-`"7/1"` and `"07/01"` appear in its live data. Posting an unconfigured key here is a
-400 listing the valid ones.
-
-## Discount codes are never in the repository
-
-The profile carries the **name** of an environment variable
-(`discount_code_env: EVENTBRITE_DISCOUNT_GENERAL`), never a code — the profile is
-committed and is served to the browser. Codes live only in App Service settings. The
-predecessor had two live codes, an institutional email-domain branch, and the event
-slug as string literals in a route handler.
-
-## The clear endpoint
-
-`POST /api/admin/clear` needs an allow-listed principal **and**
-`ENABLE_DESTRUCTIVE_OPS=True`, and writes a `DESTRUCTIVE:` audit line naming who ran
-it. There is no CI path to it.
-
-The predecessor's equivalent had **no authentication dependency at all**: the only
-gate was a confirmation phrase published in its own repository, so any anonymous
-caller who knew the hostname could delete every registration and payment. It was open
-because a workflow curled it with no header. That workflow is gone; enable the flag,
-act, disable it.
+- Matches registrations to Eventbrite payments and reports the difference.
+- Front-desk check-in, one column per event day.
+- Swag inventory, issuance and replacements.
+- Waivers, refund overrides and manual payment links.
+- Excel export of what is on screen, plus a full audit dump.
 
 ## Quickstart
 
 ```sh
-docker-compose run --rm test     # the whole suite, same command as CI
-docker-compose up app            # http://localhost:8000
+docker-compose up            # http://localhost:8000
+docker-compose run --rm test
 ```
+
+## Routes
+
+| Route | Auth | |
+|---|---|---|
+| `GET /` | user | dashboard |
+| `GET /api/reports/registrations` | user | the reconciliation table |
+| `POST /api/sync` | user | pull from Eventbrite |
+| `POST /api/checkin` | user | `{person_key, day_key, state}` |
+| `GET /api/changes?since=` | user | polling feed for the desk |
+| `POST /api/drupal-webhook` | token | upsert |
+| `GET /healthz` | none | liveness |
 
 ## Configuration
 
@@ -86,43 +52,54 @@ provisioning does not do it. Verify with `az webapp auth show`.
 
 ## Drupal wiring
 
-Remote Post handler → `POST /api/drupal-webhook`, token under a **`headers:`** key in
-Custom options. Completed and Updated URLs; Draft and Deleted empty.
+Add a Remote Post handler on your registration webform pointing at
+`https://<app>.azurewebsites.net/api/drupal-webhook`, Completed and Updated,
+method POST, type JSON. Custom options:
 
-Consumed: `email`, a name, plus `uuid`, `sid`, `serial`, `tickets_sold_separately`,
-`destination_url`, `t_shirt_size`, `attendee_status`.
+```yaml
+headers:
+  X-Drupal-Webhook-Token: <the token the toolkit printed>
+```
 
-An exemption checkbox hidden by `#states` is **absent** from the payload, not false —
-absent reads as exempt, which is what the form intends for speakers and organizers.
+**The nesting matters** — a flat key is ignored and every call 403s while the
+registrant still sees success. Confirm with `GET /api/webhook/status`, which
+reports counters and `unmapped_keys` and no attendee data.
+
+Field keys are declared in
+[drupal-event-forms](https://github.com/pu-shd/drupal-event-forms/blob/main/contracts/).
+
+## Check-in day keys are ISO dates
+
+`2027-06-28`, and a named event is `2027-06-30-banquet`. They come from
+`schedule.checkin_days` in the event profile. Migration `0002` rewrites legacy
+`"6/28"` keys by position and fails loudly on anything it does not recognise.
 
 ## Swag lives here, and only here
 
-`nametag-press` deliberately has no swag fields. Two applications counting shirts
-independently is how you oversell mediums.
+One application counts shirts. If you want a size on a badge, read it from the
+profile in `nametag-press` rather than keeping a second inventory.
+
+## Discount codes
+
+Referenced by environment variable name, never by value. Set
+`EVENTBRITE_DISCOUNT_*` as application settings.
 
 ## Deploying
 
 ```zsh
-eventkit azure deploy --event my-event-2027 --dry-run   # every az command, none run
+eventkit azure deploy --event my-event-2027 --dry-run   # prints every az command
 eventkit azure deploy --event my-event-2027
 ```
 
-`deploy/app.conf` declares what the toolkit needs: the settings to prompt for,
-generate or compute, and the manual gates this application requires. For
-ticket-reconciler, every route is behind Easy Auth — it shows payment amounts.
+Idempotent and resumable; it joins the event's existing resource group, plan and
+registry or creates them. `deploy/app.conf` declares the settings and gates.
+Every route is behind Easy Auth — it shows payment amounts.
 
-The toolkit is idempotent and resumable — it joins the event's existing resource
-group, plan and registry, or creates them if this is the event's first
-application. It is the **only** writer of application settings; do not also set
-them in a workflow. Full documentation:
-[`docs/azure/`](https://github.com/pu-shd/eventkit/blob/main/docs/azure/README.md).
-
-CI/CD templates for deploy, test, backup, drift, admin tasks and teardown ship
-with eventkit:
+CI/CD templates:
 
 ```zsh
-cp "$(python -c 'import eventkit.azure as a; print(a.templates_path())')"/workflows/deploy.yml \
-   .github/workflows/
+TPL="$(python -c 'import eventkit.azure as a; print(a.templates_path())')"
+cp "$TPL"/workflows/{deploy,test,backup}.yml .github/workflows/
 ```
 
 Without Azure, the container runs anywhere:
@@ -130,11 +107,14 @@ Without Azure, the container runs anywhere:
 ```sh
 docker build --target runtime -t ticket-reconciler .
 docker run -p 8000:8000 \
+  -v "$PWD/event-profile.yaml:/app/event-profile.yaml:ro" \
   -e DRUPAL_WEBHOOK_TOKEN="$(openssl rand -hex 32)" \
   -e AUTHORIZED_PRINCIPALS="you@example.edu" \
   -e DATABASE_URL="sqlite:////data/ticket-reconciler.db" \
   ticket-reconciler
 ```
+
+→ [Deployment guide](https://github.com/pu-shd/eventkit/blob/main/docs/azure/README.md)
 
 ## Licence
 
