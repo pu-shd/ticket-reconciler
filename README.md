@@ -100,6 +100,42 @@ absent reads as exempt, which is what the form intends for speakers and organize
 `nametag-press` deliberately has no swag fields. Two applications counting shirts
 independently is how you oversell mediums.
 
+## Deploying
+
+```zsh
+eventkit azure deploy --event my-event-2027 --dry-run   # every az command, none run
+eventkit azure deploy --event my-event-2027
+```
+
+`deploy/app.conf` declares what the toolkit needs: the settings to prompt for,
+generate or compute, and the manual gates this application requires. For
+ticket-reconciler, every route is behind Easy Auth — it shows payment amounts.
+
+The toolkit is idempotent and resumable — it joins the event's existing resource
+group, plan and registry, or creates them if this is the event's first
+application. It is the **only** writer of application settings; do not also set
+them in a workflow. Full documentation:
+[`docs/azure/`](https://github.com/pu-shd/eventkit/blob/main/docs/azure/README.md).
+
+CI/CD templates for deploy, test, backup, drift, admin tasks and teardown ship
+with eventkit:
+
+```zsh
+cp "$(python -c 'import eventkit.azure as a; print(a.templates_path())')"/workflows/deploy.yml \
+   .github/workflows/
+```
+
+Without Azure, the container runs anywhere:
+
+```sh
+docker build --target runtime -t ticket-reconciler .
+docker run -p 8000:8000 \
+  -e DRUPAL_WEBHOOK_TOKEN="$(openssl rand -hex 32)" \
+  -e AUTHORIZED_PRINCIPALS="you@example.edu" \
+  -e DATABASE_URL="sqlite:////data/ticket-reconciler.db" \
+  ticket-reconciler
+```
+
 ## Licence
 
 MIT. Copyright (c) 2026 The Trustees of Princeton University.
